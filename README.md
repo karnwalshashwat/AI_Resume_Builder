@@ -1,5 +1,13 @@
 # 🧑‍💼 AI Resume Builder
 
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![GitHub stars](https://img.shields.io/github/stars/karnwalshashwat/AI_Resume_Builder?style=social)
+![GitHub forks](https://img.shields.io/github/forks/karnwalshashwat/AI_Resume_Builder?style=social)
+![Repo size](https://img.shields.io/github/repo-size/karnwalshashwat/AI_Resume_Builder)
+![Last commit](https://img.shields.io/github/last-commit/karnwalshashwat/AI_Resume_Builder)
+
+
 An AI-powered Resume Builder that helps users create professional resumes quickly and easily.  
 This project uses Python with a simple interface and allows exporting resumes in customizable formats.  
 
