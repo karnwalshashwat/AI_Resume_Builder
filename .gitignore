@@ -1,0 +1,44 @@
+# Ignore virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Installer logs
+pip-log.txt
+
+# Unit test / coverage reports
+.coverage
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
