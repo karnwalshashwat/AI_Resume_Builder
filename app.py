@@ -112,9 +112,9 @@ TEMPLATES = {
 # ---------------------------
 def normalize(text: str) -> str:
     text = text.lower()
-    text = re.sub(r"http[s]?://\\S+", " ", text)
+    text = re.sub(r"http[s]?://\S+", " ", text)
     text = re.sub(r"[^a-z0-9+.# ]+", " ", text)
-    text = re.sub(r"\\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 def tokenize(text: str):
@@ -263,6 +263,122 @@ def md_to_pdf(md_text: str) -> bytes:
     buffer.close()
     return pdf_value
 
+# JSON export function
+def parse_markdown_to_json(md_text: str, header_info: dict, resolved_role: str, ats_score: float) -> str:
+    """
+    Convert markdown resume to structured JSON format
+    """
+    sections = {
+        "personal_info": header_info,
+        "target_role": resolved_role,
+        "ats_score": round(ats_score, 3),
+        "summary": "",
+        "skills": [],
+        "experience": [],
+        "projects": [],
+        "education": [],
+        "currently_learning": []
+    }
+    
+    current_section = None
+    current_item = {}
+    
+    for line in md_text.split('\n'):
+        line = line.strip()
+        
+        # Detect sections
+        if line.startswith('## '):
+            section_title = line[3:].strip().lower()
+            
+            # Save previous item if exists
+            if current_item and current_section:
+                if current_section == "experience":
+                    sections["experience"].append(current_item)
+                elif current_section == "projects":
+                    sections["projects"].append(current_item)
+                elif current_section == "education":
+                    sections["education"].append(current_item)
+                current_item = {}
+            
+            # Map section titles
+            if 'summary' in section_title or 'about' in section_title or 'profile' in section_title:
+                current_section = "summary"
+            elif 'skill' in section_title:
+                current_section = "skills"
+            elif 'experience' in section_title or 'work' in section_title:
+                current_section = "experience"
+            elif 'project' in section_title:
+                current_section = "projects"
+            elif 'education' in section_title or 'academic' in section_title:
+                current_section = "education"
+            elif 'learning' in section_title:
+                current_section = "currently_learning"
+            else:
+                current_section = None
+                
+        elif line and current_section:
+            # Process content based on section
+            if current_section == "summary":
+                if not line.startswith('#') and not line.startswith('-'):
+                    sections["summary"] += line + " "
+                    
+            elif current_section == "skills":
+                if line.startswith('- ') or line.startswith('* '):
+                    skill = line[2:].strip()
+                    # Remove bold markers
+                    skill = re.sub(r'\*\*([^*]+)\*\*', r'\1', skill)
+                    skill = re.sub(r'\*([^*]+)\*', r'\1', skill)
+                    sections["skills"].append(skill)
+                    
+            elif current_section in ["experience", "projects", "education"]:
+                if line.startswith('###'):
+                    # Save previous item
+                    if current_item:
+                        sections[current_section].append(current_item)
+                    # Start new item
+                    current_item = {
+                        "title": line[3:].strip(),
+                        "details": []
+                    }
+                elif line.startswith('- ') or line.startswith('* '):
+                    if current_item:
+                        current_item["details"].append(line[2:].strip())
+                    else:
+                        # Item without title
+                        current_item = {
+                            "title": line[2:].strip(),
+                            "details": []
+                        }
+                elif line and not line.startswith('#') and current_item:
+                    # Additional details
+                    if "description" not in current_item:
+                        current_item["description"] = line
+                    else:
+                        current_item["description"] += " " + line
+                        
+            elif current_section == "currently_learning":
+                if line.startswith('- ') or line.startswith('* '):
+                    sections["currently_learning"].append(line[2:].strip())
+    
+    # Save last item if exists
+    if current_item and current_section in ["experience", "projects", "education"]:
+        sections[current_section].append(current_item)
+    
+    # Clean up summary
+    sections["summary"] = sections["summary"].strip()
+    
+    # Add metadata
+    result = {
+        "resume_data": sections,
+        "metadata": {
+            "generated_at": datetime.now().isoformat(),
+            "format_version": "1.0",
+            "ats_optimized": True
+        }
+    }
+    
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
 # ---------------------------
 # OpenAI helpers
 # ---------------------------
@@ -338,7 +454,7 @@ Rewrite the resume following the rules strictly for maximum ATS score (75%+ requ
                 {"role": "system", "content": REWRITE_SYS_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,  # Lower temperature for more consistent keyword inclusion
+            temperature=0.2,
         )
         md = comp.choices[0].message.content.strip()
     return md
@@ -395,7 +511,7 @@ Do NOT fabricate experience but DO optimize existing content for maximum keyword
                     {"role": "system", "content": REWRITE_SYS_PROMPT},
                     {"role": "user", "content": improvement_prompt},
                 ],
-                temperature=0.1,  # Very low temperature for consistent improvement
+                temperature=0.1,
             )
             current_resume = comp.choices[0].message.content.strip()
         except Exception as e:
@@ -595,22 +711,66 @@ if run:
         st.write("**Role Relevance:**", f"{after_scores['role_relevance']:.1%}")
         st.write("**Skills Coverage:**", f"{len(before_scores['missing_skills']) - len(after_scores['missing_skills'])} additional skills matched")
 
-    # Downloads
+    # Downloads Section
+    st.subheader("📥 Download Your Resume")
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     base_filename = f"resume_{resolved_role.replace(' ','_')}_{timestamp}"
     
-    md_bytes = rewritten_md.encode("utf-8")
-    st.download_button("⬇ Download Markdown", data=md_bytes, 
-                      file_name=f"{base_filename}.md", mime="text/markdown")
-
-    docx_bytes = md_to_docx(rewritten_md)
-    st.download_button("⬇ Download DOCX", data=docx_bytes, 
-                      file_name=f"{base_filename}.docx", 
-                      mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-
-    pdf_bytes = md_to_pdf(rewritten_md)
-    st.download_button("⬇ Download PDF", data=pdf_bytes, 
-                      file_name=f"{base_filename}.pdf", mime="application/pdf")
-
+    # Create columns for download buttons
+    dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
+    
+    with dl_col1:
+        md_bytes = rewritten_md.encode("utf-8")
+        st.download_button(
+            "⬇ Markdown", 
+            data=md_bytes, 
+            file_name=f"{base_filename}.md", 
+            mime="text/markdown",
+            use_container_width=True
+        )
+    
+    with dl_col2:
+        docx_bytes = md_to_docx(rewritten_md)
+        st.download_button(
+            "⬇ DOCX", 
+            data=docx_bytes, 
+            file_name=f"{base_filename}.docx", 
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
+    
+    with dl_col3:
+        pdf_bytes = md_to_pdf(rewritten_md)
+        st.download_button(
+            "⬇ PDF", 
+            data=pdf_bytes, 
+            file_name=f"{base_filename}.pdf", 
+            mime="application/pdf",
+            use_container_width=True
+        )
+    
+    with dl_col4:
+        # Generate JSON
+        header_info = extract_header(resume_text)
+        json_data = parse_markdown_to_json(
+            rewritten_md, 
+            header_info, 
+            resolved_role, 
+            after_scores['ats_score']
+        )
+        json_bytes = json_data.encode("utf-8")
+        st.download_button(
+            "⬇ JSON", 
+            data=json_bytes, 
+            file_name=f"{base_filename}.json", 
+            mime="application/json",
+            use_container_width=True
+        )
+    
     score_emoji = "🎉" if after_scores['ats_score'] >= target_ats_decimal else "📈"
     st.success(f"{score_emoji} ATS-optimized resume generated with {after_scores['ats_score']:.1%} score!")
+    
+    # Optional: Show JSON preview
+    with st.expander("👁️ Preview JSON Structure"):
+        st.json(json.loads(json_data))
