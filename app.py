@@ -266,8 +266,33 @@ def md_to_pdf(md_text: str) -> bytes:
 # JSON export function
 def parse_markdown_to_json(md_text: str, header_info: dict, resolved_role: str, ats_score: float) -> str:
     """
-    Convert markdown resume to structured JSON format
+    Convert markdown resume to structured JSON format with full content
     """
+    # Extract name and contact from markdown if not in header_info
+    lines = md_text.split('\n')
+    
+    # Try to extract header from first few lines
+    if lines and lines[0].startswith('# '):
+        name_line = lines[0][2:].strip()
+        if '—' in name_line:
+            header_info['name'] = name_line.split('—')[0].strip()
+        else:
+            header_info['name'] = name_line
+    
+    # Parse contact info from second line if present
+    if len(lines) > 1:
+        contact_line = lines[1]
+        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', contact_line)
+        phone_match = re.search(r'[\+\d][\d\s\-\(\)]+', contact_line)
+        linkedin_match = re.search(r'linkedin\.com/[\w\-/]+', contact_line)
+        
+        if email_match:
+            header_info['email'] = email_match.group()
+        if phone_match:
+            header_info['phone'] = phone_match.group().strip()
+        if linkedin_match:
+            header_info['linkedin'] = linkedin_match.group()
+    
     sections = {
         "personal_info": header_info,
         "target_role": resolved_role,
@@ -282,30 +307,33 @@ def parse_markdown_to_json(md_text: str, header_info: dict, resolved_role: str, 
     
     current_section = None
     current_item = {}
+    summary_lines = []
     
-    for line in md_text.split('\n'):
-        line = line.strip()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # Skip header lines (first 2-3 lines)
+        if i < 3 and (line.startswith('# ') or '·' in line or '|' in line or '📧' in line):
+            i += 1
+            continue
         
         # Detect sections
-        if line.startswith('## '):
-            section_title = line[3:].strip().lower()
+        if line.startswith('## ') or line.startswith('### ') and len(line) > 4:
+            section_title = line.replace('##', '').replace('#', '').strip().lower()
             
             # Save previous item if exists
-            if current_item and current_section:
-                if current_section == "experience":
-                    sections["experience"].append(current_item)
-                elif current_section == "projects":
-                    sections["projects"].append(current_item)
-                elif current_section == "education":
-                    sections["education"].append(current_item)
+            if current_item and current_section in ["experience", "projects", "education"]:
+                sections[current_section].append(current_item)
                 current_item = {}
             
             # Map section titles
             if 'summary' in section_title or 'about' in section_title or 'profile' in section_title:
                 current_section = "summary"
+                summary_lines = []
             elif 'skill' in section_title:
                 current_section = "skills"
-            elif 'experience' in section_title or 'work' in section_title:
+            elif 'experience' in section_title or 'work' in section_title or 'history' in section_title:
                 current_section = "experience"
             elif 'project' in section_title:
                 current_section = "projects"
@@ -319,53 +347,88 @@ def parse_markdown_to_json(md_text: str, header_info: dict, resolved_role: str, 
         elif line and current_section:
             # Process content based on section
             if current_section == "summary":
-                if not line.startswith('#') and not line.startswith('-'):
-                    sections["summary"] += line + " "
+                if not line.startswith('#') and not line.startswith('-') and not line.startswith('*'):
+                    summary_lines.append(line)
+                    sections["summary"] = " ".join(summary_lines)
                     
             elif current_section == "skills":
                 if line.startswith('- ') or line.startswith('* '):
                     skill = line[2:].strip()
-                    # Remove bold markers
+                    # Remove markdown formatting
                     skill = re.sub(r'\*\*([^*]+)\*\*', r'\1', skill)
                     skill = re.sub(r'\*([^*]+)\*', r'\1', skill)
+                    skill = re.sub(r'_([^_]+)_', r'\1', skill)
                     sections["skills"].append(skill)
+                elif line and not line.startswith('#'):
+                    # Handle skills not in bullet format
+                    skills_list = [s.strip() for s in line.split(',') if s.strip()]
+                    for skill in skills_list:
+                        skill = re.sub(r'\*\*([^*]+)\*\*', r'\1', skill)
+                        skill = re.sub(r'\*([^*]+)\*', r'\1', skill)
+                        if skill and skill not in sections["skills"]:
+                            sections["skills"].append(skill)
                     
             elif current_section in ["experience", "projects", "education"]:
-                if line.startswith('###'):
+                if line.startswith('###') or (line.startswith('**') and line.endswith('**')):
                     # Save previous item
                     if current_item:
                         sections[current_section].append(current_item)
                     # Start new item
+                    title = line.replace('###', '').replace('**', '').strip()
                     current_item = {
-                        "title": line[3:].strip(),
+                        "title": title,
+                        "description": "",
                         "details": []
                     }
                 elif line.startswith('- ') or line.startswith('* '):
+                    detail = line[2:].strip()
+                    # Remove markdown formatting
+                    detail = re.sub(r'\*\*([^*]+)\*\*', r'\1', detail)
+                    detail = re.sub(r'\*([^*]+)\*', r'\1', detail)
                     if current_item:
-                        current_item["details"].append(line[2:].strip())
+                        current_item["details"].append(detail)
                     else:
-                        # Item without title
+                        # Bullet without title - create item
                         current_item = {
-                            "title": line[2:].strip(),
+                            "title": detail,
+                            "description": "",
                             "details": []
                         }
-                elif line and not line.startswith('#') and current_item:
-                    # Additional details
-                    if "description" not in current_item:
-                        current_item["description"] = line
+                elif line and not line.startswith('#'):
+                    # Additional descriptive text
+                    if current_item:
+                        if current_item["description"]:
+                            current_item["description"] += " " + line
+                        else:
+                            current_item["description"] = line
                     else:
-                        current_item["description"] += " " + line
+                        # Text without item - create one
+                        current_item = {
+                            "title": line,
+                            "description": "",
+                            "details": []
+                        }
                         
             elif current_section == "currently_learning":
                 if line.startswith('- ') or line.startswith('* '):
-                    sections["currently_learning"].append(line[2:].strip())
+                    learning = line[2:].strip()
+                    learning = re.sub(r'\*\*([^*]+)\*\*', r'\1', learning)
+                    sections["currently_learning"].append(learning)
+        
+        i += 1
     
     # Save last item if exists
     if current_item and current_section in ["experience", "projects", "education"]:
         sections[current_section].append(current_item)
     
-    # Clean up summary
+    # Clean up
     sections["summary"] = sections["summary"].strip()
+    
+    # Remove empty description fields
+    for section in ["experience", "projects", "education"]:
+        for item in sections[section]:
+            if "description" in item and not item["description"]:
+                del item["description"]
     
     # Add metadata
     result = {
